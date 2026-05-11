@@ -1,0 +1,60 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# FintechBank – Local Development docker-compose
+# Usage: docker compose up --build
+# ─────────────────────────────────────────────────────────────────────────────
+version: "3.9"
+
+networks:
+  fintech-dev:
+    driver: bridge
+
+volumes:
+  redis_dev_data:
+
+services:
+  frontend:
+    build:
+      context: ./app/frontend
+      dockerfile: Dockerfile
+    container_name: fintech-frontend-dev
+    ports:
+      - "3000:80"
+    networks:
+      - fintech-dev
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./app/backend
+      dockerfile: Dockerfile
+      target: production
+    container_name: fintech-api-dev
+    ports:
+      - "4000:4000"
+    environment:
+      - NODE_ENV=development
+      - PORT=4000
+      - JWT_SECRET=dev-secret-not-for-production
+      - ALLOWED_ORIGINS=http://localhost:3000,http://localhost:4000
+    networks:
+      - fintech-dev
+    volumes:
+      - ./app/backend:/app:ro
+      - /app/node_modules
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    container_name: fintech-redis-dev
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_dev_data:/data
+    networks:
+      - fintech-dev
+    restart: unless-stopped

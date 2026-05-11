@@ -1,0 +1,64 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# DEPLOYMENT STRATEGY 04: Self-Hosted Docker Registry – Private Images
+# FintechBank – Fintech Scalability Challenge
+# ─────────────────────────────────────────────────────────────────────────────
+version: "3.9"
+
+volumes:
+  registry_data:
+  registry_certs:
+  registry_auth:
+
+networks:
+  registry-net:
+    driver: bridge
+
+services:
+  # ── Private Registry ────────────────────────────────────────────────────────
+  registry:
+    image: registry:2.8
+    container_name: fintech-registry
+    ports:
+      - "5000:5000"
+    environment:
+      REGISTRY_AUTH: htpasswd
+      REGISTRY_AUTH_HTPASSWD_REALM: "FintechBank Private Registry"
+      REGISTRY_AUTH_HTPASSWD_PATH: /auth/htpasswd
+      REGISTRY_HTTP_TLS_CERTIFICATE: /certs/domain.crt
+      REGISTRY_HTTP_TLS_KEY: /certs/domain.key
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"
+      REGISTRY_HTTP_HEADERS_X-Content-Type-Options: "[nosniff]"
+      REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY: /var/lib/registry
+      REGISTRY_LOG_LEVEL: warn
+      REGISTRY_LOG_FORMATTER: json
+    volumes:
+      - registry_data:/var/lib/registry
+      - registry_certs:/certs:ro
+      - registry_auth:/auth:ro
+    networks:
+      - registry-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "--no-check-certificate", "https://localhost:5000/v2/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── Registry UI ─────────────────────────────────────────────────────────────
+  registry-ui:
+    image: joxit/docker-registry-ui:latest
+    container_name: fintech-registry-ui
+    ports:
+      - "8080:80"
+    environment:
+      - REGISTRY_TITLE=FintechBank Registry
+      - REGISTRY_URL=https://registry.fintech.dev:5000
+      - SINGLE_REGISTRY=true
+      - SHOW_CONTENT_DIGEST=true
+      - DELETE_IMAGES=true
+      - SHOW_CATALOG_NB_TAGS=true
+    networks:
+      - registry-net
+    depends_on:
+      - registry
+    restart: unless-stopped
