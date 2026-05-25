@@ -1,0 +1,239 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# DEPLOYMENT STRATEGY 05: CI/CD Automation – GitHub Actions
+# FintechBank – Fintech Scalability Challenge
+# ─────────────────────────────────────────────────────────────────────────────
+name: FintechBank CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, staging]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Deploy environment"
+        required: true
+        default: "staging"
+        type: choice
+        options: [staging, production]
+
+env:
+  REGISTRY: ${{ secrets.REGISTRY_HOST }}
+  IMAGE_BACKEND: ${{ secrets.REGISTRY_HOST }}/fintech-api
+  IMAGE_FRONTEND: ${{ secrets.REGISTRY_HOST }}/fintech-frontend
+  APP_VERSION: ${{ github.sha }}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Job 1: Security Audit ──────────────────────────────────────────────────
+  security-audit:
+    name: 🔐 Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: app/backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: app/backend
+        run: npm ci
+
+      - name: NPM Security Audit
+        working-directory: app/backend
+        run: npm audit --audit-level=high
+
+      - name: Run SAST (Semgrep)
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: auto
+        continue-on-error: true
+
+  # ── Job 2: Test ────────────────────────────────────────────────────────────
+  test:
+    name: 🧪 Run Tests
+    runs-on: ubuntu-latest
+    needs: security-audit
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: app/backend/package-lock.json
+
+      - name: Install & Test
+        working-directory: app/backend
+        run: |
+          npm ci
+          npm test -- --coverage --coverageReporters=lcov
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: app/backend/coverage/lcov.info
+
+  # ── Job 3: Build & Push Docker Images ─────────────────────────────────────
+  build:
+    name: 🐳 Build & Push Images
+    runs-on: [self-hosted, linux, fintech-runner]
+    needs: test
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build-backend.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      - name: Login to private registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USER }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_BACKEND }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build & push backend
+        id: build-backend
+        uses: docker/build-push-action@v5
+        with:
+          context: app/backend
+          target: production
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.IMAGE_BACKEND }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE_BACKEND }}:buildcache,mode=max
+          build-args: |
+            APP_VERSION=${{ github.sha }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+
+      - name: Build & push frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: app/frontend
+          push: true
+          tags: ${{ env.IMAGE_FRONTEND }}:${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.IMAGE_FRONTEND }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE_FRONTEND }}:buildcache,mode=max
+
+  # ── Job 4: Deploy to Staging ───────────────────────────────────────────────
+  deploy-staging:
+    name: 🚀 Deploy Staging
+    runs-on: [self-hosted, linux, fintech-runner]
+    needs: build
+    environment:
+      name: staging
+      url: https://staging.fintech.dev
+    if: github.ref == 'refs/heads/staging' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to staging server
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: fintech
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          port: 2222
+          script: |
+            cd /opt/fintech
+            export APP_VERSION=${{ github.sha }}
+            docker compose pull
+            docker compose up -d --no-deps --scale api=2
+            docker system prune -f
+
+      - name: Health check
+        run: |
+          sleep 15
+          curl -f https://staging.fintech.dev/health || exit 1
+
+      - name: Notify Slack
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {"text": "✅ FintechBank deployed to *staging* — `${{ github.sha }}` by ${{ github.actor }}"}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  # ── Job 5: Deploy to Production (Canary) ──────────────────────────────────
+  deploy-production:
+    name: 🌍 Deploy Production (Canary)
+    runs-on: [self-hosted, linux, fintech-runner]
+    needs: [build, deploy-staging]
+    environment:
+      name: production
+      url: https://fintech.dev
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy canary (10%)
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: fintech
+          key: ${{ secrets.PROD_SSH_KEY }}
+          port: 2222
+          script: |
+            cd /opt/fintech
+            export APP_VERSION=${{ github.sha }}
+            bash deployments/07-canary-releases/deploy-canary.sh 10
+
+      - name: Monitor canary (5 min)
+        run: |
+          echo "Monitoring canary for 5 minutes..."
+          for i in {1..10}; do
+            sleep 30
+            ERROR_RATE=$(curl -s https://fintech.dev/metrics | jq '.error_rate // 0')
+            echo "[$i/10] Error rate: $ERROR_RATE"
+            if (( $(echo "$ERROR_RATE > 1" | bc -l) )); then
+              echo "Error rate too high! Rolling back..."
+              exit 1
+            fi
+          done
+
+      - name: Full rollout
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: fintech
+          key: ${{ secrets.PROD_SSH_KEY }}
+          port: 2222
+          script: |
+            cd /opt/fintech
+            bash deployments/07-canary-releases/deploy-canary.sh 100
+
+      - name: Notify production deploy
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {"text": "🚀 FintechBank `${{ github.ref_name }}` deployed to *production* by ${{ github.actor }}"}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

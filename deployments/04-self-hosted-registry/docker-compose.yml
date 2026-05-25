@@ -1,0 +1,45 @@
+version: "3.9"
+
+volumes:
+  registry_data:
+  registry_auth:
+
+networks:
+  registry-net:
+    driver: bridge
+
+services:
+
+  registry:
+    image: registry:2
+    container_name: fintech-registry
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./config.yml:/etc/docker/registry/config.yml:ro
+      - registry_data:/var/lib/registry
+      - ./auth:/auth:ro
+    networks:
+      - registry-net
+    restart: unless-stopped
+
+  registry-ui:
+    image: joxit/docker-registry-ui:latest
+    container_name: fintech-registry-ui
+    ports:
+      - "8080:80"
+    environment:
+      - REGISTRY_TITLE=FintechBank Registry
+      - REGISTRY_URL=http://134.195.138.18:5000
+      - SINGLE_REGISTRY=true
+      - SHOW_CONTENT_DIGEST=true
+      - DELETE_IMAGES=true
+      - SHOW_CATALOG_NB_TAGS=true
+      - REGISTRY_AUTH=basic
+      - REGISTRY_USER=mihir
+      - REGISTRY_PASS=password123
+    networks:
+      - registry-net
+    depends_on:
+      - registry
+    restart: unless-stopped

@@ -42,3 +42,10 @@ logs/
 # ─── Test ────────────────────────────────────────────────────────────────────
 junit.xml
 test-results/
+
+# Local backup files - Day 3 & Day 4
+.env.production.save
+
+# Day 4 registry backups
+deployments/04-self-hosted-registry/docker-compose.yml_backkup
+deployments/04-self-hosted-registry/registry-compose.yml_backup

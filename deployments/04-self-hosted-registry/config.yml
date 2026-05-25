@@ -1,0 +1,18 @@
+version: 0.1
+log:
+  fields:
+    service: registry
+http:
+  addr: :5000
+  headers:
+    Access-Control-Allow-Origin: ["http://134.195.138.18:8080"]
+    Access-Control-Allow-Methods: ["HEAD","GET","OPTIONS","DELETE"]
+    Access-Control-Allow-Headers: ["Authorization","Accept","Cache-Control"]
+    Access-Control-Expose-Headers: ["Docker-Content-Digest"]
+storage:
+  filesystem:
+    rootdirectory: /var/lib/registry
+auth:
+  htpasswd:
+    realm: FintechBank Registry
+    path: /auth/htpasswd
