@@ -134,8 +134,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=${{ env.IMAGE_BACKEND }}:buildcache
-          cache-to: type=registry,ref=${{ env.IMAGE_BACKEND }}:buildcache,mode=max
+          #cache-from: type=registry,ref=${{ env.IMAGE_BACKEND }}:buildcache
+          #cache-to: type=registry,ref=${{ env.IMAGE_BACKEND }}:buildcache,mode=max
           build-args: |
             APP_VERSION=${{ github.sha }}
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
@@ -146,8 +146,8 @@ jobs:
           context: app/frontend
           push: true
           tags: ${{ env.IMAGE_FRONTEND }}:${{ github.sha }}
-          cache-from: type=registry,ref=${{ env.IMAGE_FRONTEND }}:buildcache
-          cache-to: type=registry,ref=${{ env.IMAGE_FRONTEND }}:buildcache,mode=max
+          #cache-from: type=registry,ref=${{ env.IMAGE_FRONTEND }}:buildcache
+          #cache-to: type=registry,ref=${{ env.IMAGE_FRONTEND }}:buildcache,mode=max
 
   # ── Job 4: Deploy to Staging ───────────────────────────────────────────────
   deploy-staging:
